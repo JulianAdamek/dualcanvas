@@ -16,6 +16,8 @@ class CanvasWidget(QWidget):
         get_brush_radius: Optional[Callable[[], int]] = None,
         get_tool: Optional[Callable[[], object]] = None,
         on_hover: Optional[Callable[[int, int], None]] = None,
+        get_overlay_mask: Optional[Callable[[], Optional[np.ndarray]]] = None,
+        show_overlay: Optional[Callable[[], bool]] = None,
         parent=None,
     ):
         """
@@ -24,6 +26,8 @@ class CanvasWidget(QWidget):
         get_brush_radius: optional callable returning current brush radius
         get_tool: optional callable returning current tool enum
         on_hover: optional callable receiving hover image coords (y, x)
+        get_overlay_mask: optional callable returning a boolean overlay mask (H, W)
+        show_overlay: optional callable deciding if overlay should be shown
         """
         super().__init__(parent)
         self._get_image = get_image
@@ -33,6 +37,8 @@ class CanvasWidget(QWidget):
         self._get_brush_radius = get_brush_radius
         self._get_tool = get_tool
         self._on_hover = on_hover
+        self._get_overlay_mask = get_overlay_mask
+        self._show_overlay = show_overlay
         self._zoom = 1.0
         self._last_pos: Optional[QPoint] = None
         self._hover_pos: Optional[QPoint] = None
@@ -49,6 +55,14 @@ class CanvasWidget(QWidget):
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
         painter.scale(self._zoom, self._zoom)
         painter.drawImage(0, 0, qimg)
+
+        if self._show_overlay is not None and self._show_overlay() and self._get_overlay_mask is not None:
+            overlay_mask = self._get_overlay_mask()
+            if overlay_mask is not None and overlay_mask.shape[:2] == (H, W):
+                overlay = np.zeros((H, W, 4), dtype=np.uint8)
+                overlay[overlay_mask] = np.array([255, 255, 0, 140], dtype=np.uint8)
+                overlay_img = QImage(overlay.data, W, H, 4 * W, QImage.Format.Format_RGBA8888)
+                painter.drawImage(0, 0, overlay_img)
 
         if self._hover_pos is not None and self._get_brush_radius is not None:
             tool = self._get_tool() if self._get_tool is not None else None

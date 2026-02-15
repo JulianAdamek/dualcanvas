@@ -24,6 +24,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.controller = VisualAnagramController()
+        self._show_piece_outlines = False
         self._init_ui()
 
     def _init_ui(self):
@@ -40,6 +41,8 @@ class MainWindow(QMainWindow):
             get_brush_radius=lambda: self.controller.brush_radius,
             get_tool=lambda: self.controller.current_tool,
             on_hover=self._hover_A,
+            get_overlay_mask=lambda: self.controller.flagged_mask_A,
+            show_overlay=lambda: self._show_piece_outlines,
         )
         self.canvasB = CanvasWidget(
             get_image=lambda: self.controller.imgB,
@@ -49,6 +52,8 @@ class MainWindow(QMainWindow):
             get_brush_radius=lambda: self.controller.brush_radius,
             get_tool=lambda: self.controller.current_tool,
             on_hover=self._hover_B,
+            get_overlay_mask=lambda: self.controller.flagged_mask_B,
+            show_overlay=lambda: self._show_piece_outlines,
         )
 
         layout.addWidget(self.canvasA)
@@ -64,6 +69,7 @@ class MainWindow(QMainWindow):
         menubar = self.menuBar()
         file_menu = menubar.addMenu("&File")
         edit_menu = menubar.addMenu("&Edit")
+        view_menu = menubar.addMenu("&View")
 
         act_perm = QAction("Load permutation...", self)
         act_perm.triggered.connect(self._load_perm)
@@ -103,6 +109,13 @@ class MainWindow(QMainWindow):
 
         self._act_undo = act_undo
         self._act_redo = act_redo
+
+        act_outlines = QAction("Show Piece Outlines", self)
+        act_outlines.setCheckable(True)
+        act_outlines.setChecked(self._show_piece_outlines)
+        act_outlines.triggered.connect(self._toggle_piece_outlines)
+        view_menu.addAction(act_outlines)
+        self._act_outlines = act_outlines
 
     def _build_toolbar(self):
         toolbar = QToolBar("Tools", self)
@@ -161,6 +174,31 @@ class MainWindow(QMainWindow):
 
         toolbar.addWidget(self._brush_slider)
         toolbar.addWidget(self._brush_spin)
+        toolbar.addWidget(QLabel("Opacity:"))
+        self._opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self._opacity_slider.setMinimum(0)
+        self._opacity_slider.setMaximum(100)
+        self._opacity_slider.setValue(self._current_opacity_percent())
+        self._opacity_slider.setFixedWidth(100)
+        self._opacity_slider.valueChanged.connect(self._opacity_changed_from_slider)
+
+        self._opacity_spin = QSpinBox()
+        self._opacity_spin.setMinimum(0)
+        self._opacity_spin.setMaximum(100)
+        self._opacity_spin.setSuffix("%")
+        self._opacity_spin.setValue(self._current_opacity_percent())
+        self._opacity_spin.valueChanged.connect(self._opacity_changed_from_spinbox)
+
+        toolbar.addWidget(self._opacity_slider)
+        toolbar.addWidget(self._opacity_spin)
+
+        toolbar.addSeparator()
+        act_outline_toggle = QAction("Piece Outlines", self)
+        act_outline_toggle.setCheckable(True)
+        act_outline_toggle.setChecked(self._show_piece_outlines)
+        act_outline_toggle.triggered.connect(self._toggle_piece_outlines)
+        toolbar.addAction(act_outline_toggle)
+        self._act_outline_toggle = act_outline_toggle
 
     def _set_tool(self, tool: Tool):
         self.controller.set_tool(tool)
@@ -183,6 +221,7 @@ class MainWindow(QMainWindow):
     def _update_color_button(self, color: QColor):
         qss = f"background-color: rgba({color.red()},{color.green()},{color.blue()},{color.alpha()});"
         self._color_button.setStyleSheet(qss)
+        self._sync_opacity_controls_from_color()
 
     def _brush_size_changed_from_slider(self, value: int):
         self._brush_spin.blockSignals(True)
@@ -196,6 +235,36 @@ class MainWindow(QMainWindow):
         self._brush_slider.setValue(value)
         self._brush_slider.blockSignals(False)
         self.controller.set_brush_radius(value)
+        self._update_status()
+
+    def _current_opacity_percent(self) -> int:
+        return int(self.controller.brush_opacity_percent)
+
+    def _sync_opacity_controls_from_color(self):
+        if not hasattr(self, "_opacity_slider") or not hasattr(self, "_opacity_spin"):
+            return
+        opacity = self._current_opacity_percent()
+        self._opacity_slider.blockSignals(True)
+        self._opacity_slider.setValue(opacity)
+        self._opacity_slider.blockSignals(False)
+        self._opacity_spin.blockSignals(True)
+        self._opacity_spin.setValue(opacity)
+        self._opacity_spin.blockSignals(False)
+
+    def _opacity_changed_from_slider(self, value: int):
+        self._opacity_spin.blockSignals(True)
+        self._opacity_spin.setValue(value)
+        self._opacity_spin.blockSignals(False)
+        self.controller.set_brush_opacity_percent(value)
+        self._refresh_color_button_from_controller()
+        self._update_status()
+
+    def _opacity_changed_from_spinbox(self, value: int):
+        self._opacity_slider.blockSignals(True)
+        self._opacity_slider.setValue(value)
+        self._opacity_slider.blockSignals(False)
+        self.controller.set_brush_opacity_percent(value)
+        self._refresh_color_button_from_controller()
         self._update_status()
 
     def _stroke_begin_A(self, y: int, x: int):
@@ -262,6 +331,20 @@ class MainWindow(QMainWindow):
         col = self.controller.brush_color
         color = QColor(int(col[0]), int(col[1]), int(col[2]), int(col[3]))
         self._update_color_button(color)
+
+    def _toggle_piece_outlines(self, checked: bool):
+        self._show_piece_outlines = checked
+        if hasattr(self, "_act_outlines"):
+            self._act_outlines.blockSignals(True)
+            self._act_outlines.setChecked(checked)
+            self._act_outlines.blockSignals(False)
+        if hasattr(self, "_act_outline_toggle"):
+            self._act_outline_toggle.blockSignals(True)
+            self._act_outline_toggle.setChecked(checked)
+            self._act_outline_toggle.blockSignals(False)
+        self.canvasA.update()
+        self.canvasB.update()
+        self._update_status()
 
     def _load_perm(self):
         path, _ = QFileDialog.getOpenFileName(self, "Load permutation", "", "NumPy files (*.npy)")
